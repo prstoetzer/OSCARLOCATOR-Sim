@@ -54,6 +54,9 @@ h1 em{font-style:normal;color:var(--accent);}
 .disc-holder{position:relative;width:100%;aspect-ratio:1/1;max-width:560px;margin:0 auto;}
 #map{width:100%;height:100%;display:block;touch-action:none;cursor:grab;}
 #map.dragging{cursor:grabbing;}
+#map.locked{cursor:not-allowed;}
+input[type=range]:disabled{opacity:.45;cursor:not-allowed;}
+.panel.locked .slider{opacity:.55;}
 .readout-strip{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;padding-top:12px;
   border-top:1px solid var(--line);font-family:'DejaVu Sans Mono',monospace;font-size:12px;color:var(--muted);}
 .readout-strip b{color:var(--text);font-weight:400;}
@@ -1652,8 +1655,8 @@ function setMin(v){ state.afterMin = +v;
   document.getElementById("v-min").textContent = (+v).toFixed(1);
   document.getElementById("s-min").value = v; buildArc(); }
 
-document.getElementById("s-eqx").addEventListener("input", e => setEqx(e.target.value));
-document.getElementById("s-min").addEventListener("input", e => setMin(e.target.value));
+document.getElementById("s-eqx").addEventListener("input", e => { if (state.live) { e.target.value = state.eqxLon; return; } setEqx(e.target.value); });
+document.getElementById("s-min").addEventListener("input", e => { if (state.live) { e.target.value = state.afterMin; return; } setMin(e.target.value); });
 
 function showErr(msg){ const e = document.getElementById("err"); e.style.display = "block"; e.textContent = msg; }
 function clearErr(){ document.getElementById("err").style.display = "none"; }
@@ -1955,11 +1958,23 @@ function seedNextPass() {
     "Next visible pass: AOS " + aosStr + " UTC, max elevation " + pass.maxEl.toFixed(0) + "° over your QTH.";
 }
 
+function setControlsLocked(locked) {
+  const eqx = document.getElementById("s-eqx");
+  const min = document.getElementById("s-min");
+  if (eqx) eqx.disabled = locked;
+  if (min) min.disabled = locked;
+  const svgEl = document.getElementById("map");
+  if (svgEl) svgEl.classList.toggle("locked", locked);
+  const sweep = document.querySelector(".leftcol .panel");
+  if (sweep) sweep.classList.toggle("locked", locked);
+}
+
 function toggleLive() {
   const btn = document.getElementById("live");
   if (state.live) {
     state.live = false; clearInterval(state.liveTimer); state.liveTimer = null;
     btn.classList.remove("on"); btn.textContent = "Go live";
+    setControlsLocked(false);
     return;
   }
   if (!state.sat) { showErr("Load a satellite first."); return; }
@@ -1972,6 +1987,7 @@ function toggleLive() {
   state.refDate = c.date;
   setEqx(c.lonDeg);
   state.live = true; btn.classList.add("on"); btn.textContent = "Live ●";
+  setControlsLocked(true);
   const tick = () => {
     // re-resolve hemisphere (polar-auto follows the satellite); redraw the base
     // map when the satellite crosses the equator and the sheet flips.
@@ -2270,7 +2286,11 @@ function copyRefTable() {
     const vx = sx / rect.width * 660, vy = sy / rect.height * 660;
     return Math.atan2(vy - CY, vx - CX) * 180 / Math.PI;
   }
-  function down(ev){ if(!state.sat) return; dragging = true; svg.classList.add("dragging"); lastAngle = angleAt(ev); if(state.live) toggleLive(); ev.preventDefault(); }
+  function down(ev){
+    if(!state.sat) return;
+    if(state.live){ ev.preventDefault(); return; }   // arc is locked while live tracking
+    dragging = true; svg.classList.add("dragging"); lastAngle = angleAt(ev); ev.preventDefault();
+  }
   function move(ev){
     if (!dragging) return;
     const a = angleAt(ev);
