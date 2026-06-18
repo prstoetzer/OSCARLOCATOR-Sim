@@ -237,6 +237,29 @@ footer.foot{margin-top:22px;background:var(--panel);border:1px solid var(--line)
     </div>
   </div>
 
+  <!-- NEXT PASSES -->
+  <div class="panel" style="margin-top:22px;">
+    <h2>Next passes over your QTH</h2>
+    <div class="body">
+      <p class="note" style="margin-top:0">The next ten times the satellite rises above your horizon,
+        with start (AOS), peak, end (LOS), duration, and maximum elevation. Higher max elevation means a
+        stronger, longer pass. Use <b>Seed</b> to jump the map to that pass.</p>
+      <div class="reftable-controls">
+        <label class="rc">Min elevation
+          <input id="pass-minel" class="mono" type="number" min="0" max="60" value="0" />°
+        </label>
+        <button class="btn ghost sm" id="pass-refresh">Refresh</button>
+        <button class="btn ghost sm" id="pass-copy">Copy</button>
+      </div>
+      <div class="reftable-wrap">
+        <table class="reftable mono" id="passtable">
+          <thead><tr><th>AOS (UTC)</th><th>Peak</th><th>LOS</th><th>Dur</th><th>Max el</th><th></th></tr></thead>
+          <tbody id="pass-body"><tr><td colspan="6" class="ref-empty">Load a satellite to list passes.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- REFERENCE ORBITS TABLE -->
   <div class="panel" style="margin-top:22px;">
     <h2>Reference orbits — equator crossings</h2>
@@ -1641,16 +1664,13 @@ function loadSat() {
     seedNextPass();
     updateModeBadge();
     buildRefTable();
+    buildPassTable();
   } catch (e) { showErr("Could not load: " + e.message); }
 }
 
 // ---- AMSAT satellite catalog (GP data) ----
 const BULLETIN_URL = "https://newark192.amsat.org/gpdata/current/daily-bulletin.json";
-// ===================================================================
-// CONFIG -- set this to your Cloudflare Worker URL before deploying.
-// It is read only here and is never shown in the page UI.
-const PROXY_URL = "https://oscarlocator-pwa.prstoetzer.workers.dev/";
-// ===================================================================
+const PROXY_URL = "https://oscarlocator-pwa.prstoetzer.workers.dev/";  // self-hosted CORS proxy; tried first. The proxyurl input field, if present, overrides this.
 let catalog = [];
 
 // Populate the picker dropdown from a catalog array (bundled or freshly fetched).
@@ -1801,19 +1821,102 @@ async function fetchAmsat() {
   }
 }
 
+// Elevation (deg) of the satellite as seen from the QTH at a given time.
+function elevationAt(date) {
+  const sp = subPoint(state.sat, date);
+  if (!sp) return -90;
+  return azElRange(sp.lonDeg, sp.latDeg, sp.altKm).el;
+}
+
+// Find the next time the satellite rises above the horizon at the QTH (AOS),
+// scanning forward from `from`. Returns { aos, max, maxEl, los, maxAz } or null.
+function findNextVisiblePass(from, horizonDeg) {
+  const horizon = horizonDeg || 0;
+  const stepSec = 30;
+  const horizonMs = 48 * 3600 * 1000;     // search up to 48 h ahead
+  let prevEl = elevationAt(from);
+  let t = from.getTime();
+  const end = t + horizonMs;
+  while (t < end) {
+    t += stepSec * 1000;
+    const el = elevationAt(new Date(t));
+    if (prevEl <= horizon && el > horizon) {
+      // bracket the AOS crossing, then refine by bisection
+      let lo = t - stepSec * 1000, hi = t;
+      for (let k = 0; k < 24; k++) {
+        const mid = (lo + hi) / 2;
+        if (elevationAt(new Date(mid)) > horizon) hi = mid; else lo = mid;
+      }
+      const aos = new Date(hi);
+      // walk to the elevation peak and on to LOS (drop below horizon)
+      let pk = hi, pkEl = elevationAt(aos), los = end;
+      for (let s = hi; s < end; s += stepSec * 1000) {
+        const e = elevationAt(new Date(s));
+        if (e > pkEl) { pkEl = e; pk = s; }
+        if (e <= horizon) {
+          // refine LOS by bisection between s-step and s
+          let l2 = s - stepSec * 1000, h2 = s;
+          for (let k = 0; k < 20; k++) { const m = (l2 + h2) / 2; if (elevationAt(new Date(m)) > horizon) l2 = m; else h2 = m; }
+          los = h2; break;
+        }
+      }
+      // azimuth at peak
+      const spPk = subPoint(state.sat, new Date(pk));
+      const maxAz = spPk ? azElRange(spPk.lonDeg, spPk.latDeg, spPk.altKm).az : null;
+      return { aos, max: new Date(pk), maxEl: pkEl, los: new Date(los), maxAz };
+    }
+    prevEl = el;
+  }
+  return null;
+}
+
+// Collect the next `n` visible passes from now.
+function findNextPasses(n, horizonDeg) {
+  const passes = [];
+  let from = new Date();
+  for (let i = 0; i < n; i++) {
+    const p = findNextVisiblePass(from, horizonDeg);
+    if (!p) break;
+    passes.push(p);
+    from = new Date(p.los.getTime() + 60000); // resume just after LOS
+  }
+  return passes;
+}
+
 function seedNextPass() {
   if (!state.sat) { showErr("Load a satellite first."); return; }
   clearErr();
   const now = new Date();
+  const pass = findNextVisiblePass(now, 0);
+  if (!pass) { showErr("No visible pass over your QTH in the next 48 h (check your QTH lat/lon)."); return; }
+
+  // Anchor the arc to the node crossing of THIS pass, so the drawn orbit is the
+  // one that's actually visible. Find the node crossing nearest the AOS.
   const nodeKind = state.resolved === "polar-south" ? "descending" : "ascending";
-  const cross = findCrossings(state.sat, now, new Date(now.getTime() + 24 * 3600000), { node: nodeKind, stepSec: 60 });
-  if (!cross.length) { showErr("No ascending crossing found in the next 24 h."); return; }
-  const c = cross[0];
-  state.refDate = c.date;
-  setEqx(c.lonDeg);
-  setMin(0);
+  const win = 130 * 60000;  // half an orbit either side of AOS
+  const cands = findCrossings(state.sat, new Date(pass.aos.getTime() - win),
+    new Date(pass.aos.getTime() + win), { node: nodeKind, stepSec: 30 });
+  let node = null;
+  if (cands.length) {
+    // the node crossing just before AOS (the pass belongs to that orbit)
+    const before = cands.filter(c => c.date.getTime() <= pass.aos.getTime());
+    node = (before.length ? before[before.length - 1] : cands[0]);
+  }
+  if (node) {
+    state.refDate = node.date;
+    setEqx(node.lonDeg);
+    setMin(Math.max(0, (pass.aos.getTime() - node.date.getTime()) / 60000));
+  } else {
+    // fallback: anchor directly at AOS
+    state.refDate = pass.aos;
+    const sp = subPoint(state.sat, pass.aos);
+    if (sp) setEqx(sp.lonDeg);
+    setMin(0);
+  }
+
+  const aosStr = pass.aos.toISOString().slice(0, 16).replace("T", " ");
   document.getElementById("hint").textContent =
-    "Seeded to the next ascending crossing: " + c.date.toISOString().slice(0, 16).replace("T", " ") + " UTC.";
+    "Next visible pass: AOS " + aosStr + " UTC, max elevation " + pass.maxEl.toFixed(0) + "° over your QTH.";
 }
 
 function toggleLive() {
@@ -1893,6 +1996,7 @@ document.getElementById("mode").addEventListener("change", e => {
   updateModeBadge();
   if (state.sat) seedNextPass(); else buildArc();
   buildRefTable();
+  buildPassTable();
 });
 document.getElementById("fetchsats").addEventListener("click", fetchAmsat);
 document.getElementById("satpick").addEventListener("change", e => {
@@ -1904,6 +2008,99 @@ document.getElementById("satpick").addEventListener("change", e => {
 document.getElementById("ref-refresh").addEventListener("click", buildRefTable);
 document.getElementById("ref-days").addEventListener("change", buildRefTable);
 document.getElementById("ref-copy").addEventListener("click", copyRefTable);
+document.getElementById("pass-refresh").addEventListener("click", buildPassTable);
+document.getElementById("pass-minel").addEventListener("change", buildPassTable);
+document.getElementById("pass-copy").addEventListener("click", copyPassTable);
+
+// ---- Next passes over the QTH ----
+let passRows = [];
+function fmtDur(ms) {
+  const m = Math.round(ms / 60000);
+  return m + " min";
+}
+function fmtUTC(d, withDate) {
+  const s = d.toISOString();
+  return withDate ? s.slice(5, 16).replace("T", " ") : s.slice(11, 16);
+}
+function buildPassTable() {
+  const body = document.getElementById("pass-body");
+  if (!state.sat) { body.innerHTML = '<tr><td colspan="6" class="ref-empty">Load a satellite to list passes.</td></tr>'; return; }
+  body.innerHTML = '<tr><td colspan="6" class="ref-empty">Computing passes…</td></tr>';
+  // compute asynchronously so the "Computing…" paints first
+  setTimeout(() => {
+    const minEl = Math.max(0, Math.min(60, parseFloat(document.getElementById("pass-minel").value) || 0));
+    passRows = findNextPasses(10, minEl);
+    if (!passRows.length) {
+      body.innerHTML = '<tr><td colspan="6" class="ref-empty">No passes above ' + minEl + '° in the next 48 h.</td></tr>';
+      return;
+    }
+    body.innerHTML = "";
+    passRows.forEach((p, i) => {
+      const tr = document.createElement("tr");
+      const dur = p.los.getTime() - p.aos.getTime();
+      const az = p.maxAz != null ? " " + compass(p.maxAz) : "";
+      tr.innerHTML =
+        '<td>' + fmtUTC(p.aos, true) + '</td>' +
+        '<td>' + fmtUTC(p.max) + '</td>' +
+        '<td>' + fmtUTC(p.los) + '</td>' +
+        '<td>' + fmtDur(dur) + '</td>' +
+        '<td class="lon">' + p.maxEl.toFixed(0) + '°' + az + '</td>' +
+        '<td><button class="btn ghost sm pass-seed" data-i="' + i + '">Seed</button></td>';
+      body.appendChild(tr);
+    });
+    body.querySelectorAll(".pass-seed").forEach(btn => {
+      btn.addEventListener("click", () => seedPass(passRows[parseInt(btn.dataset.i)]));
+    });
+  }, 30);
+}
+function compass(az) {
+  const dirs = ["N","NE","E","SE","S","SW","W","NW"];
+  return dirs[Math.round(az / 45) % 8];
+}
+// Seed the map arc to a specific pass (same anchoring as seedNextPass).
+function seedPass(pass) {
+  if (!pass || !state.sat) return;
+  if (state.live) toggleLive();
+  clearErr();
+  const nodeKind = state.resolved === "polar-south" ? "descending" : "ascending";
+  const win = 130 * 60000;
+  const cands = findCrossings(state.sat, new Date(pass.aos.getTime() - win),
+    new Date(pass.aos.getTime() + win), { node: nodeKind, stepSec: 30 });
+  let node = null;
+  if (cands.length) {
+    const before = cands.filter(c => c.date.getTime() <= pass.aos.getTime());
+    node = (before.length ? before[before.length - 1] : cands[0]);
+  }
+  if (node) {
+    state.refDate = node.date;
+    setEqx(node.lonDeg);
+    setMin(Math.max(0, (pass.aos.getTime() - node.date.getTime()) / 60000));
+  } else {
+    state.refDate = pass.aos;
+    const sp = subPoint(state.sat, pass.aos);
+    if (sp) setEqx(sp.lonDeg);
+    setMin(0);
+  }
+  document.getElementById("hint").textContent =
+    "Seeded pass: AOS " + fmtUTC(pass.aos, true) + " UTC, max elevation " + pass.maxEl.toFixed(0) + "°.";
+}
+function copyPassTable() {
+  if (!passRows.length) return;
+  const lines = ["Next passes — " + document.getElementById("satname").value
+    + " over " + state.qlat.toFixed(2) + ", " + state.qlon.toFixed(2), "",
+    "AOS (UTC)        Peak   LOS    Dur     MaxEl  Dir"];
+  for (const p of passRows) {
+    const dur = Math.round((p.los - p.aos) / 60000) + "m";
+    lines.push(
+      fmtUTC(p.aos, true).padEnd(14) + "  " + fmtUTC(p.max) + "  " + fmtUTC(p.los) + "  " +
+      dur.padStart(5) + "  " + (p.maxEl.toFixed(0) + "°").padStart(5) + "  " +
+      (p.maxAz != null ? compass(p.maxAz) : ""));
+  }
+  const text = lines.join("\n");
+  if (navigator.clipboard) navigator.clipboard.writeText(text);
+  const btn = document.getElementById("pass-copy");
+  const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = old, 1200);
+}
 
 // ---- Reference orbits table (EQX time + longitude per UTC day) ----
 let refRows = [];
@@ -1996,8 +2193,7 @@ function copyRefTable() {
 // boot
 loadSat();
 loadBundledCatalog();
-// GitHub Pages allows outbound requests; pull live elements automatically.
-if (PROXY_URL && !/YOUR-WORKER/.test(PROXY_URL)) { fetchAmsat(); }
+if (PROXY_URL) { fetchAmsat(); }
 </script>
 </body>
 </html>
