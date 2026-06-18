@@ -1727,9 +1727,9 @@ function ammSources() {
     //  (a) fixed-upstream worker (the bundled one): hit it as-is, it returns the array.
     //  (b) generic proxy that needs the target URL: append ?url=<encoded bulletin>.
     // Try the as-is form first, then the ?url= form, so either kind of proxy works.
-    list.push({ name: "your proxy", url: base, parse: parseFlexible, tries: 2 });
+    list.push({ name: "proxy", url: base, parse: parseFlexible, tries: 2 });
     const joiner = base.includes("?") ? "&" : "?";
-    list.push({ name: "your proxy (?url=)", url: base + joiner + "url=" + enc, parse: parseFlexible, tries: 2 });
+    list.push({ name: "proxy (?url=)", url: base + joiner + "url=" + enc, parse: parseFlexible, tries: 2 });
   }
   // allorigins /get wraps the body in {contents:"..."}; reliable but intermittent — retry it
   list.push({ name: "allorigins/get", url: "https://api.allorigins.win/get?url=" + enc,
