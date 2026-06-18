@@ -188,7 +188,11 @@ footer.foot{margin-top:22px;background:var(--panel);border:1px solid var(--line)
         <h2>Station &amp; satellite</h2>
         <div class="body">
           <div class="field"><label>Grid square (Maidenhead)</label>
-            <input id="qgrid" class="mono" value="FM18lv" placeholder="e.g. FM18lw" maxlength="6" />
+            <div class="picker">
+              <input id="qgrid" class="mono" value="FM18lv" placeholder="e.g. FM18lw" maxlength="6" />
+              <button class="btn ghost sm" id="geo" title="Detect my location">Use my location</button>
+            </div>
+            <div id="geo-status" class="note" style="margin-top:6px;min-height:1em"></div>
           </div>
           <div class="row2">
             <div class="field"><label>QTH latitude</label><input id="qlat" class="mono" value="38.90" /></div>
@@ -2016,6 +2020,40 @@ document.getElementById("load").addEventListener("click", loadSat);
   gEl.addEventListener("input", fromGrid);
   laEl.addEventListener("input", fromLatLon);
   loEl.addEventListener("input", fromLatLon);
+
+  // ---- Geolocation: apply browser-detected coordinates to the QTH ----
+  function applyCoords(lat, lon) {
+    laEl.value = lat.toFixed(4);
+    loEl.value = lon.toFixed(4);
+    fromLatLon();                 // update grid square
+    state.qlat = lat; state.qlon = lon;
+    if (state.sat) { drawBase(); seedNextPass(); buildPassTable(); buildRefTable(); }
+    else { drawBase(); }
+  }
+  function detectLocation(manual) {
+    const status = document.getElementById("geo-status");
+    if (!navigator.geolocation) {
+      if (manual && status) status.textContent = "Geolocation isn't available in this browser.";
+      return;
+    }
+    if (status) status.textContent = "Detecting your location…";
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        applyCoords(pos.coords.latitude, pos.coords.longitude);
+        if (status) status.textContent = "Using your detected location (grid " + gEl.value + ").";
+      },
+      err => {
+        if (status) status.textContent = manual
+          ? (err.code === 1 ? "Location permission denied — enter your QTH manually." : "Couldn't get your location — enter your QTH manually.")
+          : "";   // silent on auto-attempt; default QTH stays
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
+    );
+  }
+  const geoBtn = document.getElementById("geo");
+  if (geoBtn) geoBtn.addEventListener("click", () => detectLocation(true));
+  // Auto-detect once on load (uses the default QTH until/unless the user allows it).
+  detectLocation(false);
 })();
 document.getElementById("seed").addEventListener("click", () => { if (state.live) toggleLive(); seedNextPass(); });
 document.getElementById("live").addEventListener("click", toggleLive);
