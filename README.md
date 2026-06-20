@@ -43,7 +43,29 @@ watches network requests; a Worker URL is not a secret, but it is kept out of
 the visible interface as requested. Lock the Worker down by origin in
 `proxy/worker.js` if you want to restrict who can call it.)
 
-## 3. Publish to GitHub Pages
+## 3. Publish to GitHub Pages (custom subdomain)
+
+This folder includes a `CNAME` file set to **oscarlocator.n8hm.radio**. To serve
+the site from that subdomain:
+
+1. Push this folder's contents (including `CNAME`) to a GitHub repo.
+2. **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
+   pick your branch and `/ (root)`, save.
+3. In your `n8hm.radio` DNS, add a CNAME record:
+   `oscarlocator  CNAME  YOURUSERNAME.github.io`  (bare github.io host, not the repo URL).
+4. Back in **Settings → Pages → Custom domain**, confirm `oscarlocator.n8hm.radio`
+   is shown (the `CNAME` file sets this automatically), then tick **Enforce HTTPS**
+   once DNS propagates. HTTPS is required for the geolocation auto-detect to work.
+
+The site will be live at `https://oscarlocator.n8hm.radio/`.
+
+The bundled Worker (`proxy/worker.js`) is **locked to this subdomain**: it only
+returns the AMSAT bulletin to requests from `https://oscarlocator.n8hm.radio`,
+`https://n8hm.radio`, and `http://localhost:8000`. Edit `ALLOW_ORIGINS` in
+`proxy/worker.js` to change that list (or set it to `["*"]` to allow any origin),
+then redeploy the Worker.
+
+## 3b. Generic GitHub Pages (no custom domain)
 1. Create a repo and add `index.html` (and `proxy/` if you like) to it.
 2. Repo **Settings → Pages → Build and deployment → Source: Deploy from a
    branch**, pick your branch and `/ (root)`, save.

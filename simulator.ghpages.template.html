@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>OSCARLOCATOR Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DejaVu+Sans+Mono&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* OrbitDeck palette (GitHub-dark) — matched to the desktop simulator */
+  --bg:#0d1117;          /* COL_BG */
+  --panel:#161b22;       /* COL_PANEL — map facecolor */
+  --accent:#2f81f7;      /* COL_ACCENT — orbit track (blue) */
+  --accent2:#3fb950;     /* COL_ACCENT2 — satellite marker (green) */
+  --warn:#d29922;        /* COL_WARN — QTH range circle / reticle (amber) */
+  --text:#e6edf3;        /* COL_TEXT */
+  --muted:#8b949e;       /* COL_MUTED */
+  --grid:#30363d;        /* COL_GRID — graticule */
+  --coast:#5a86a8;       /* coastline stroke in the sim */
+  --sat-foot:#9ecbff;    /* light-blue accents in the sim */
+  /* derived surfaces */
+  --map-sea:#161b22;
+  --map-land:#1c2530;
+  --line:#30363d;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg);min-height:100vh;}
+body{font-family:'DejaVu Sans','Bitstream Vera Sans',Verdana,sans-serif;color:var(--text);
+  -webkit-font-smoothing:antialiased;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);}
+.mono{font-family:'DejaVu Sans Mono','Bitstream Vera Sans Mono',monospace;}
+
+.wrap{max-width:1180px;margin:0 auto;padding:22px 20px 60px;}
+
+header.top{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:22px 22px 20px;margin-bottom:22px;}
+.eyebrow{font-family:'DejaVu Sans Mono',monospace;font-size:11px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
+h1{font-family:'DejaVu Sans','Bitstream Vera Sans',Verdana,sans-serif;font-weight:700;
+  font-size:clamp(22px,3.4vw,32px);line-height:1.1;margin:0;color:var(--text);}
+h1 em{font-style:normal;color:var(--accent);}
+.tagline{margin:12px 0 0;max-width:620px;color:var(--muted);font-size:14px;line-height:1.5;}
+
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:22px;align-items:start;}
+@media(max-width:920px){.layout{grid-template-columns:1fr;}}
+.leftcol{min-width:0;}
+.rightcol{min-width:0;}
+
+/* ---- the locator instrument (matches OrbitDeck's embedded matplotlib panel) ---- */
+.instrument{position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:14px;}
+.disc-holder{position:relative;width:100%;aspect-ratio:1/1;max-width:560px;margin:0 auto;}
+#map{width:100%;height:100%;display:block;touch-action:none;cursor:grab;}
+#map.dragging{cursor:grabbing;}
+#map.locked{cursor:not-allowed;}
+input[type=range]:disabled{opacity:.45;cursor:not-allowed;}
+.panel.locked .slider{opacity:.55;}
+.readout-strip{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;padding-top:12px;
+  border-top:1px solid var(--line);font-family:'DejaVu Sans Mono',monospace;font-size:12px;color:var(--muted);}
+.readout-strip b{color:var(--text);font-weight:400;}
+.readout-strip .k{color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:10px;}
+
+/* ---- control panel ---- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+.panel h2{font-family:'DejaVu Sans',sans-serif;font-weight:700;font-size:13px;
+  color:var(--text);margin:0;padding:14px 16px 0;}
+.panel .body{padding:12px 16px 18px;}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;}
+.field label{font-size:11px;letter-spacing:.02em;color:var(--muted);}
+.field input,.field select{background:var(--panel);border:1px solid var(--grid);border-radius:6px;
+  color:var(--text);font-family:'DejaVu Sans Mono',monospace;font-size:14px;padding:8px 10px;width:100%;}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+
+.check{display:flex;align-items:center;gap:9px;cursor:pointer;font-size:13px;color:var(--text);padding:4px 0 10px;}
+.check input{width:16px;height:16px;accent-color:var(--warn);}
+.mode-badge{margin-top:6px;font-size:11px;color:var(--accent);display:none;}
+.picker{display:flex;gap:8px;align-items:stretch;}
+.picker select{flex:1;min-width:0;}
+.btn.sm{width:auto;padding:8px 12px;font-size:12px;white-space:nowrap;}
+.reftable-controls{display:flex;gap:10px;align-items:center;margin:10px 0 12px;}
+.reftable-controls .rc{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:7px;}
+.reftable-controls .rc input{width:60px;background:var(--panel);border:1px solid var(--grid);
+  border-radius:6px;color:var(--text);font-family:'DejaVu Sans Mono',monospace;font-size:13px;padding:6px 8px;}
+.reftable-wrap{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:6px;}
+.reftable{width:100%;border-collapse:collapse;font-size:12.5px;}
+.reftable th{position:sticky;top:0;background:var(--panel);text-align:left;color:var(--muted);
+  font-weight:400;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap;}
+.reftable td{padding:6px 12px;border-bottom:1px solid rgba(48,54,61,.5);white-space:nowrap;color:var(--text);}
+.reftable tbody tr:nth-child(even){background:rgba(22,27,34,.5);}
+.reftable td.lon{color:var(--warn);}
+.reftable .ref-empty{color:var(--muted);text-align:center;padding:18px;}
+footer.foot .credit{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);color:var(--muted);}
+footer.foot .credit b{color:var(--text);font-weight:700;}
+
+.slider{margin-bottom:16px;}
+.slider .lab{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+.slider .lab span:first-child{font-size:11px;letter-spacing:.02em;color:var(--muted);}
+.slider .val{font-family:'DejaVu Sans Mono',monospace;font-size:13px;color:var(--accent);font-weight:700;}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;
+  background:var(--grid);outline:none;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;
+  border-radius:50%;background:var(--accent);border:2px solid var(--panel);cursor:pointer;}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--accent);
+  border:2px solid var(--panel);cursor:pointer;}
+
+.btn{appearance:none;border:1px solid var(--grid);background:var(--panel);color:var(--text);
+  font-family:'DejaVu Sans',sans-serif;font-weight:700;font-size:13px;
+  padding:10px 14px;border-radius:6px;cursor:pointer;width:100%;transition:.12s;}
+.btn:hover{background:var(--grid);}
+.btn.primary{border-color:var(--accent);background:var(--accent);color:#fff;}
+.btn.primary:hover{background:#4a91f8;}
+.btn.ghost:hover{background:var(--grid);}
+.btn.live.on{border-color:var(--warn);color:var(--warn);}
+.btnrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px;}
+
+.note{font-size:12px;line-height:1.5;color:var(--muted);margin:12px 0 0;}
+.err{margin-top:12px;border-left:3px solid var(--warn);background:rgba(210,153,34,.1);
+  color:var(--warn);font-size:12.5px;padding:8px 11px;border-radius:0 5px 5px 0;}
+
+details.adv{margin-top:6px;border-top:1px solid var(--line);}
+details.adv summary{cursor:pointer;padding:12px 0 4px;font-family:'DejaVu Sans Mono',monospace;
+  font-size:12px;color:var(--text);list-style:none;}
+details.adv summary::-webkit-details-marker{display:none;}
+details.adv summary:before{content:"+ ";color:var(--accent);}
+details.adv[open] summary:before{content:"\2212 ";}
+
+footer.foot{margin-top:22px;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:16px 22px;color:var(--muted);font-size:12px;line-height:1.55;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>OSCARLOCATOR <em>Simulator</em></h1>
+    <p class="tagline">An interactive OSCARLOCATOR: a polar or QTH-centred azimuthal-equidistant
+      map with the satellite's ground-track arc, a range circle over your station, and the
+      satellite's footprint. Drive it live in real time, pin the equator crossing to a chosen
+      longitude and step the minutes after the crossing, or jump to the next pass. Positions come
+      from a verified SGP4/SDP4 propagator.</p>
+  </header>
+
+  <div class="layout">
+    <!-- LEFT: map + sweep controls -->
+    <div class="leftcol">
+      <div class="instrument">
+        <div class="disc-holder">
+          <svg id="map" viewBox="0 0 660 660" aria-label="Azimuthal-equidistant map centred on your station"></svg>
+        </div>
+        <div class="readout-strip mono" id="readout">
+          <div><span class="k">EQX lon</span> <b id="ro-eqx">—</b></div>
+          <div><span class="k">+min</span> <b id="ro-min">—</b></div>
+          <div><span class="k">Sub-sat</span> <b id="ro-sub">—</b></div>
+          <div><span class="k">Az/El from QTH</span> <b id="ro-azel">—</b></div>
+          <div><span class="k">Range</span> <b id="ro-range">—</b></div>
+          <div><span class="k">Visible</span> <b id="ro-vis">—</b></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:18px;">
+        <h2>Sweep the arc</h2>
+        <div class="body">
+          <div class="slider">
+            <div class="lab"><span>Equator-crossing longitude</span><span class="val" id="v-eqx">—</span></div>
+            <input type="range" id="s-eqx" min="-180" max="180" step="0.1" value="0" />
+          </div>
+          <div class="slider">
+            <div class="lab"><span>Minutes after crossing</span><span class="val" id="v-min">0</span></div>
+            <input type="range" id="s-min" min="0" max="120" step="0.5" value="0" />
+          </div>
+
+          <label class="check"><input type="checkbox" id="c-range" checked />
+            <span>Range circle over QTH (amber)</span></label>
+          <label class="check"><input type="checkbox" id="c-foot" checked />
+            <span>Satellite footprint at sub-point (green)</span></label>
+
+          <div class="btnrow">
+            <button class="btn ghost" id="seed">Next pass</button>
+            <button class="btn live" id="live">Go live</button>
+          </div>
+          <p class="note" id="hint">Drag the disc to rotate the arc by hand, or seed it to the next ascending pass over your station.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: station & satellite -->
+    <div class="rightcol">
+      <div class="panel">
+        <h2>Station &amp; satellite</h2>
+        <div class="body">
+          <div class="field"><label>Grid square (Maidenhead)</label>
+            <div class="picker">
+              <input id="qgrid" class="mono" value="FM18lv" placeholder="e.g. FM18lw" maxlength="6" />
+              <button class="btn ghost sm" id="geo" title="Detect my location">Use my location</button>
+            </div>
+            <div id="geo-status" class="note" style="margin-top:6px;min-height:1em"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>QTH latitude</label><input id="qlat" class="mono" value="38.90" /></div>
+            <div class="field"><label>QTH longitude</label><input id="qlon" class="mono" value="-77.04" /></div>
+          </div>
+          <div class="field"><label>Satellite</label>
+            <div class="picker">
+              <select id="satpick" class="mono"><option value="">— type elements below, or load AMSAT —</option></select>
+              <button class="btn ghost sm" id="fetchsats" title="Re-fetch live AMSAT GP data (works outside the sandbox)">Refresh</button>
+            </div>
+            <input id="satname" class="mono" value="AO-07" style="margin-top:8px" />
+            <div id="amsat-status" class="note" style="margin-top:6px;min-height:1em"></div>
+            <p class="note" style="margin-top:6px">Live AMSAT elements load automatically. Press
+              <b>Refresh</b> to fetch again.</p>
+          </div>
+
+          <div class="field"><label>Map projection</label>
+            <select id="mode" class="mono">
+              <option value="polar-auto" selected>Polar — auto N/S</option>
+              <option value="qth">QTH-centred (azimuthal)</option>
+              <option value="polar">Polar — North</option>
+              <option value="polar-south">Polar — South</option>
+            </select>
+            <div id="mode-badge" class="mode-badge mono"></div>
+          </div>
+
+          <details class="adv">
+            <summary>Orbital elements</summary>
+            <div style="margin-top:12px;">
+              <div class="field"><label>Epoch (UTC ISO)</label><input id="el-epoch" class="mono" value="2026-06-16T23:34:36" /></div>
+              <div class="row2">
+                <div class="field"><label>Inclination °</label><input id="el-incl" class="mono" value="101.99" /></div>
+                <div class="field"><label>RAAN °</label><input id="el-raan" class="mono" value="181.2269" /></div>
+              </div>
+              <div class="row2">
+                <div class="field"><label>Eccentricity</label><input id="el-ecc" class="mono" value="0.0012576" /></div>
+                <div class="field"><label>Arg perigee °</label><input id="el-argp" class="mono" value="130.5028" /></div>
+              </div>
+              <div class="row2">
+                <div class="field"><label>Mean anomaly °</label><input id="el-ma" class="mono" value="286.3286" /></div>
+                <div class="field"><label>Mean motion</label><input id="el-mm" class="mono" value="12.53698125" /></div>
+              </div>
+            </div>
+          </details>
+
+          <button class="btn primary" id="load">Load satellite</button>
+          <div id="err" class="err" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEXT PASSES -->
+  <div class="panel" style="margin-top:22px;">
+    <h2>Next passes over your QTH</h2>
+    <div class="body">
+      <p class="note" style="margin-top:0">The next ten times the satellite rises above your horizon,
+        with start (AOS), peak, end (LOS), duration, and maximum elevation. Higher max elevation means a
+        stronger, longer pass. Use <b>Seed</b> to jump the map to that pass.</p>
+      <div class="reftable-controls">
+        <label class="rc">Min elevation
+          <input id="pass-minel" class="mono" type="number" min="0" max="60" value="0" />°
+        </label>
+        <button class="btn ghost sm" id="pass-refresh">Refresh</button>
+        <button class="btn ghost sm" id="pass-copy">Copy</button>
+      </div>
+      <div class="reftable-wrap">
+        <table class="reftable mono" id="passtable">
+          <thead><tr><th>AOS (UTC)</th><th>Peak</th><th>LOS</th><th>Dur</th><th>Max el</th><th></th></tr></thead>
+          <tbody id="pass-body"><tr><td colspan="6" class="ref-empty">Load a satellite to list passes.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- REFERENCE ORBITS TABLE -->
+  <div class="panel" style="margin-top:22px;">
+    <h2>Reference orbits — equator crossings</h2>
+    <div class="body">
+      <p class="note" style="margin-top:0">The first equator crossing of each UTC day for the loaded
+        satellite: the time and longitude to set on a real OSCARLOCATOR. Northern-hemisphere stations use
+        the ascending node; southern-hemisphere stations use the descending node — in both the polar and
+        QTH-centred views — so the listed crossing always matches the pass you track.</p>
+      <div class="reftable-controls">
+        <label class="rc">Days
+          <input id="ref-days" class="mono" type="number" min="1" max="60" value="14" />
+        </label>
+        <button class="btn ghost sm" id="ref-refresh">Refresh</button>
+        <button class="btn ghost sm" id="ref-copy">Copy</button>
+      </div>
+      <div class="reftable-wrap">
+        <table class="reftable mono" id="reftable">
+          <thead><tr><th>UTC date</th><th id="ref-node-h">Asc. UTC</th><th>Longitude</th></tr></thead>
+          <tbody id="ref-body"><tr><td colspan="3" class="ref-empty">Load a satellite to build the table.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <div>Positions from a verified SGP4/SDP4 propagator (matched to the Vallado reference). The arc is the
+      sub-satellite ground track of one orbit, drawn from its equator crossing; sweeping longitude rotates
+      the whole track east–west the way the Earth turns beneath a fixed orbit plane. Reference geometry for
+      planning, not precise pointing.</div>
+    <div class="credit">Modeled on <b>OrbitDeck</b> by Paul Stoetzer, N8HM.</div>
+  </footer>
+</div>
+
+<script src="engine.browser.js"></script>
+<script id="land-data" type="application/json">__LAND__</script>
+<script id="amsat-data" type="application/json">__AMSAT__</script>
+<script>
+const { sgp4FromOMM, propagateAt, eciToGeodetic } = window.OLSIM_SGP4;
+const { findCrossings, subPoint } = window.OLSIM_CROSS;
+const land = JSON.parse(document.getElementById("land-data").textContent);
+
+// Azimuthal-equidistant maps in three OrbitDeck modes:
+//   "qth"          centred on the station; rho = great-circle distance, theta =
+//                  azimuth; N up, clockwise (compass).
+//   "polar"        centred on the North Pole; rho = colatitude (90-lat),
+//                  theta = longitude; 0deg longitude DOWN, east CCW (ARRL layout).
+//   "polar-south"  centred on the South Pole; rho = 90+lat, theta = longitude;
+//                  0deg longitude DOWN, east CW (southern view).
+const R = 290;                       // disc radius (px in 660 viewBox)
+const CX = 330, CY = 330;            // disc centre
+const RE_KM = 6378.135;
+const KM_PER_DEG = Math.PI / 180 * RE_KM;
+const svgNS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("map");
+
+let state = {
+  qlat: 38.90, qlon: -77.04,
+  sat: null,
+  mode: "polar-auto",   // "polar-auto" | "qth" | "polar" | "polar-south"
+  resolved: "polar",    // the concrete mode in use (polar-auto resolves to one)
+  eqxLon: 0,
+  afterMin: 0,
+  refDate: null,
+  live: false, liveTimer: null,
+  showRange: true,    // amber QTH range circle
+  showFoot: true,     // green dashed instantaneous footprint at the sub-point
+};
+
+// Resolve "polar-auto" to a concrete hemisphere. In LIVE mode the auto sheet
+// follows the SATELLITE (north sheet while it's in the N hemisphere, south
+// while in the S, flipping as it crosses the equator). Otherwise it follows the
+// station hemisphere. Mirrors OrbitDeck's _resolve_proj.
+function resolveMode() {
+  let m = state.mode;
+  if (m === "polar-auto") {
+    if (state.live && state.sat) {
+      const sp = subPoint(state.sat, new Date());
+      if (sp) return sp.latDeg < 0 ? "polar-south" : "polar";
+    }
+    return state.qlat < 0 ? "polar-south" : "polar";
+  }
+  return m;
+}
+
+function updateModeBadge() {
+  const b = document.getElementById("mode-badge");
+  if (!b) return;
+  if (state.mode === "polar-auto") {
+    const name = state.resolved === "polar-south" ? "South" : "North";
+    b.textContent = "showing: Polar " + name + (state.live ? " (follows satellite)" : " (your hemisphere)");
+    b.style.display = "block";
+  } else {
+    b.style.display = "none";
+  }
+}
+
+// map edge in great-circle degrees; QTH map is capped 50-80 like OrbitDeck,
+// polar maps go pole-to-equator (90deg).
+function rmaxDeg() {
+  if (state.resolved === "qth") return Math.max(50, Math.min(80, Math.abs(state.qlat) + 25));
+  return 90;
+}
+
+function centralAngleBearing(qlat, qlon, lat, lon) {
+  const d2r = Math.PI / 180;
+  const p1 = qlat * d2r, l1 = qlon * d2r, p2 = lat * d2r, l2 = lon * d2r;
+  const dl = l2 - l1;
+  const ca = Math.acos(Math.max(-1, Math.min(1,
+    Math.sin(p1) * Math.sin(p2) + Math.cos(p1) * Math.cos(p2) * Math.cos(dl))));
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  let br = (Math.atan2(y, x) / d2r + 360) % 360;
+  return { rhoDeg: ca / d2r, tval: br };
+}
+// (rhoDeg, tval) for the current mode. tval is azimuth (qth) or longitude (polar).
+function toPolar(lat, lon) {
+  if (state.resolved === "polar") return { rhoDeg: 90 - lat, tval: (lon + 360) % 360 };
+  if (state.resolved === "polar-south") return { rhoDeg: 90 + lat, tval: (lon + 360) % 360 };
+  return centralAngleBearing(state.qlat, state.qlon, lat, lon);
+}
+// screen [x,y] for a (rhoDeg, tval) honouring each mode's axis orientation.
+// Verified against matplotlib's set_theta_zero_location/set_theta_direction:
+//   north (S-zero, CCW): lon 0 -> down,  90E -> right  => +sin, +cos
+//   south (S-zero, CW):  lon 0 -> down,  90E -> left   => -sin, +cos
+//   qth   (N-zero, CW):  az  0 -> up,    90  -> right  => +sin, -cos
+function placeOnDisc(rhoDeg, tval) {
+  const rmax = rmaxDeg();
+  if (rhoDeg > rmax) return null;
+  const r = rhoDeg / rmax * R;
+  const a = tval * Math.PI / 180;
+  if (state.resolved === "polar")        return [CX + r * Math.sin(a), CY + r * Math.cos(a)];
+  if (state.resolved === "polar-south")  return [CX - r * Math.sin(a), CY + r * Math.cos(a)];
+  return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
+}
+function project(lat, lon) {
+  const { rhoDeg, tval } = toPolar(lat, lon);
+  return placeOnDisc(rhoDeg, tval);
+}
+// screen point for a rim/value angle (degrees) at a given radius fraction —
+// used for spokes, ticks, labels so they honour the mode orientation.
+function rimPoint(tvalDeg, rFrac) {
+  const a = tvalDeg * Math.PI / 180, r = rFrac * R;
+  if (state.resolved === "polar")       return [CX + r * Math.sin(a), CY + r * Math.cos(a)];
+  if (state.resolved === "polar-south") return [CX - r * Math.sin(a), CY + r * Math.cos(a)];
+  return [CX + r * Math.sin(a), CY - r * Math.cos(a)];
+}
+
+function el(tag, attrs) {
+  const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+// ---- Maidenhead locator <-> lat/lon (matches OrbitDeck's predict.py) ----
+function latlonToGrid(lat, lon) {
+  let L = lon + 180.0, B = lat + 90.0;
+  const A = "A".charCodeAt(0), Z = "0".charCodeAt(0), a = "a".charCodeAt(0);
+  return String.fromCharCode(A + Math.floor(L / 20))
+    + String.fromCharCode(A + Math.floor(B / 10))
+    + String.fromCharCode(Z + Math.floor((L % 20) / 2))
+    + String.fromCharCode(Z + Math.floor(B % 10))
+    + String.fromCharCode(a + Math.floor((L % 2) * 12))
+    + String.fromCharCode(a + Math.floor((B % 1) * 24));
+}
+function gridToLatlon(grid) {
+  const g = (grid || "").trim().toUpperCase();
+  if (g.length < 4) return null;
+  if (!/^[A-R]{2}[0-9]{2}([A-X]{2})?$/.test(g)) return null;
+  let lon = (g.charCodeAt(0) - 65) * 20 - 180;
+  let lat = (g.charCodeAt(1) - 65) * 10 - 90;
+  lon += (g.charCodeAt(2) - 48) * 2;
+  lat += (g.charCodeAt(3) - 48) * 1;
+  if (g.length >= 6) {
+    lon += (g.charCodeAt(4) - 65) * (2.0 / 24.0) + 1.0 / 24.0;
+    lat += (g.charCodeAt(5) - 65) * (1.0 / 24.0) + 0.5 / 24.0;
+  } else { lon += 1.0; lat += 0.5; }
+  return [lat, lon];
+}
+
+// SVG path for a 5-point star centred at (cx,cy)
+function starPath(cx, cy, rOuter, rInner, points) {
+  let d = "";
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? rOuter : rInner;
+    const a = (i / (points * 2)) * 2 * Math.PI - Math.PI / 2;
+    d += (i === 0 ? "M" : "L") + (cx + r * Math.cos(a)).toFixed(1) + " " + (cy + r * Math.sin(a)).toFixed(1) + " ";
+  }
+  return d + "Z";
+}
+
+// great-circle small circle of angular radius distDeg around (clat,clon)
+function smallCircle(clat, clon, distDeg, n) {
+  n = n || 121;
+  const d2r = Math.PI / 180;
+  const p1 = clat * d2r, l1 = clon * d2r, d = distDeg * d2r;
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const brg = (360 * i / n) * d2r;
+    const lat2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(brg));
+    const lon2 = l1 + Math.atan2(Math.sin(brg) * Math.sin(d) * Math.cos(p1),
+                                 Math.cos(d) - Math.sin(p1) * Math.sin(lat2));
+    pts.push([lat2 / d2r, ((lon2 / d2r) + 540) % 360 - 180]);
+  }
+  return pts;
+}
+// draw a projected polyline of [lat,lon], breaking where it leaves the disc
+function drawProjected(parent, latlon, attrs) {
+  let d = "", pen = false;
+  for (const [lat, lon] of latlon) {
+    const p = project(lat, lon);
+    if (!p) { pen = false; continue; }
+    d += (pen ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1) + " ";
+    pen = true;
+  }
+  if (d) parent.appendChild(el("path", Object.assign({ d: d, fill: "none" }, attrs)));
+}
+
+function footprintDeg(altKm) {
+  const x = RE_KM / (RE_KM + Math.max(altKm, 1));
+  return Math.acos(Math.max(-1, Math.min(1, x))) * 180 / Math.PI;
+}
+function meanAltKm(sat) {
+  // semi-major axis from mean motion (rev/day) via Kepler's third law
+  const n = sat.no_unkozai;            // rad/min
+  const mu = 398600.4418, nRadSec = n / 60;
+  const a = Math.cbrt(mu / (nRadSec * nRadSec));
+  return Math.max(a - RE_KM, 1);
+}
+
+function drawBase() {
+  state.resolved = resolveMode();
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const rmax = rmaxDeg();
+  const polar = state.resolved !== "qth";
+  const south = state.resolved === "polar-south";
+
+  const defs = el("defs", {});
+  const clip = el("clipPath", { id: "disc" });
+  clip.appendChild(el("circle", { cx: CX, cy: CY, r: R }));
+  defs.appendChild(clip);
+  svg.appendChild(defs);
+
+  const g = el("g", { "clip-path": "url(#disc)" });
+  svg.appendChild(g);
+  g.appendChild(el("circle", { cx: CX, cy: CY, r: R, fill: "var(--map-sea)" }));
+
+  // lat/lon graticule (grey)
+  const latLo = south ? -90 : (polar ? 0 : -80);
+  const latHi = south ? 0 : (polar ? 90 : 88);
+  for (let lon = -180; lon < 180; lon += polar ? 30 : 15) {
+    const seg = [];
+    for (let lat = latLo; lat <= latHi; lat += 2) seg.push([lat, lon]);
+    drawProjected(g, seg, { stroke: "var(--grid)", "stroke-width": 0.8, opacity: 0.8 });
+  }
+  const parLo = south ? -75 : (polar ? 0 : -75), parHi = south ? 0 : 75;
+  for (let lat = parLo; lat <= parHi; lat += 15) {
+    const seg = [];
+    for (let lon = -180; lon <= 180; lon += 2) seg.push([lat, lon]);
+    drawProjected(g, seg, { stroke: "var(--grid)", "stroke-width": 0.8, opacity: 0.8 });
+  }
+
+  // coastlines
+  for (const feat of land.features) {
+    const polys = feat.geometry.type === "Polygon" ? [feat.geometry.coordinates] : feat.geometry.coordinates;
+    for (const poly of polys)
+      for (const ring of poly)
+        drawProjected(g, ring.map(c => [c[1], c[0]]), { stroke: "var(--coast)", "stroke-width": 1.0, opacity: 1 });
+  }
+
+  if (polar) {
+    // latitude rings every 15° (concentric); longitude spokes every 30°
+    for (let latAbs = 15; latAbs < 90; latAbs += 15) {
+      const ring = 90 - latAbs;             // colatitude radius
+      const rr = ring / rmax * R;
+      g.appendChild(el("circle", { cx: CX, cy: CY, r: rr, fill: "none", stroke: "var(--grid)", "stroke-width": 1.1 }));
+      // label on the 60°-ish meridian
+      const lp = rimPoint(60, ring / rmax);
+      const t = el("text", { x: lp[0], y: lp[1], "text-anchor": "middle", "dominant-baseline": "central",
+        "font-family": "DejaVu Sans Mono, monospace", "font-size": 9, fill: "var(--muted)", opacity: 0.9 });
+      t.textContent = (south ? -latAbs : latAbs) + "°"; svg.appendChild(t);
+    }
+    for (let lon = 0; lon < 360; lon += 30) {
+      const p2 = rimPoint(lon, 1);
+      svg.appendChild(el("line", { x1: CX, y1: CY, x2: p2[0], y2: p2[1], stroke: "var(--grid)", "stroke-width": 0.9, opacity: 0.85 }));
+      const lp = rimPoint(lon, 1 + 16 / R);
+      const disp = lon <= 180 ? lon : lon - 360;
+      const hemi = disp > 0 && disp < 180 ? "E" : (disp < 0 ? "W" : "");
+      const t = el("text", { x: lp[0], y: lp[1], "text-anchor": "middle", "dominant-baseline": "central",
+        "font-family": "DejaVu Sans Mono, monospace", "font-size": 11, fill: "var(--muted)" });
+      t.textContent = Math.abs(disp) + "°" + hemi; svg.appendChild(t);
+    }
+    // pole marker at centre
+    svg.appendChild(el("circle", { cx: CX, cy: CY, r: 2.5, fill: "var(--muted)" }));
+  } else {
+    // QTH: great-circle range rings + azimuth spokes + cardinals
+    for (let rho = 30; rho <= rmax; rho += 30) {
+      const rr = rho / rmax * R;
+      g.appendChild(el("circle", { cx: CX, cy: CY, r: rr, fill: "none", stroke: "var(--grid)", "stroke-width": 1.1 }));
+    }
+    for (let az = 0; az < 360; az += 30) {
+      const p2 = rimPoint(az, 1);
+      svg.appendChild(el("line", { x1: CX, y1: CY, x2: p2[0], y2: p2[1], stroke: "var(--grid)", "stroke-width": 0.9, opacity: 0.85 }));
+    }
+    for (let az = 30; az < 360; az += 30) {
+      if (az % 90 === 0) continue;
+      const lp = rimPoint(az, 1 + 16 / R);
+      const t = el("text", { x: lp[0], y: lp[1], "text-anchor": "middle", "dominant-baseline": "central",
+        "font-family": "DejaVu Sans Mono, monospace", "font-size": 11, fill: "var(--muted)" });
+      t.textContent = az + "°"; svg.appendChild(t);
+    }
+    for (const [az, name] of [[0, "N"], [90, "E"], [180, "S"], [270, "W"]]) {
+      const lp = rimPoint(az, 1 + 18 / R);
+      const t = el("text", { x: lp[0], y: lp[1], "text-anchor": "middle", "dominant-baseline": "central",
+        "font-family": "DejaVu Sans, sans-serif", "font-size": 14, "font-weight": "bold", fill: "var(--text)" });
+      t.textContent = name; svg.appendChild(t);
+    }
+    for (let rho = 30; rho <= rmax; rho += 30) {
+      const lp = rimPoint(45, rho / rmax);
+      const t = el("text", { x: lp[0] + 2, y: lp[1] - 3, "font-family": "DejaVu Sans Mono, monospace",
+        "font-size": 9, fill: "var(--muted)", opacity: 0.85 });
+      t.textContent = Math.round(rho * KM_PER_DEG / 100) * 100 + " km"; svg.appendChild(t);
+    }
+  }
+
+  // rim + ticks (every 5°, longer every 30°)
+  svg.appendChild(el("circle", { cx: CX, cy: CY, r: R, fill: "none", stroke: "var(--muted)", "stroke-width": 1.4 }));
+  for (let a = 0; a < 360; a += 5) {
+    const len = a % 30 === 0 ? 10 : 5;
+    const p1 = rimPoint(a, 1), p2 = rimPoint(a, 1 - len / R);
+    svg.appendChild(el("line", { x1: p1[0], y1: p1[1], x2: p2[0], y2: p2[1],
+      stroke: "var(--muted)", "stroke-width": a % 30 === 0 ? 1 : 0.6 }));
+  }
+
+  // centre cross
+  const cross = el("g", {});
+  cross.appendChild(el("line", { x1: CX - 8, y1: CY, x2: CX + 8, y2: CY, stroke: "var(--text)", "stroke-width": 2 }));
+  cross.appendChild(el("line", { x1: CX, y1: CY - 8, x2: CX, y2: CY + 8, stroke: "var(--text)", "stroke-width": 2 }));
+  svg.appendChild(cross);
+
+  svg.appendChild(el("g", { id: "overlay", "clip-path": "url(#disc)" }));
+}
+
+// Build the satellite ground-track arc for one orbit, shifted so its ascending
+// node sits at the chosen equator-crossing longitude (eqxLon).
+function buildArc() {
+  const ov = document.getElementById("overlay");
+  if (!ov) return;
+  while (ov.firstChild) ov.removeChild(ov.firstChild);
+  if (!state.sat) return;
+
+  const periodMin = (2 * Math.PI / state.sat.no_unkozai);
+  // High / geosynchronous orbits (e.g. QO-100) don't make equator-crossing
+  // "passes"; the OSCARLOCATOR EQX-longitude / minutes-after sweep is meaningless
+  // for them. For these we draw the true ground track and place the satellite at
+  // its real sub-point — no longitude re-anchoring.
+  const highOrbit = periodMin > 600;
+
+  const base = state.refDate || new Date(state.sat.epochjd * 86400000 - 2440587.5 * 86400000);
+  const N = 240;
+  const startMs = base.getTime();
+  const sp0 = subPoint(state.sat, base);
+  const actualEqx = sp0 ? sp0.lonDeg : 0;
+  const lonShift = highOrbit ? 0 : (state.eqxLon - actualEqx);
+
+  // track points (longitude shifted only for LEO/OSCARLOCATOR mode)
+  const track = [];
+  for (let i = 0; i <= N; i++) {
+    const t = new Date(startMs + (i / N) * periodMin * 60000);
+    const sp = subPoint(state.sat, t);
+    if (!sp) continue;
+    let lon = ((sp.lonDeg + lonShift + 180) % 360 + 360) % 360 - 180;
+    track.push([sp.latDeg, lon]);
+  }
+  drawProjected(ov, track, { stroke: "var(--accent)", "stroke-width": 2.6, "stroke-linejoin": "round", "stroke-linecap": "round" });
+
+  // Time marks along the track: light-blue dots with the minute number in a
+  // small rounded box (OrbitDeck's #9ecbff dots / #cfe6ff labels). For LEO these
+  // are every 10 min; for high orbits the interval scales so the track isn't
+  // swamped (~12 marks per revolution).
+  const markStep = highOrbit ? Math.max(10, Math.round(periodMin / 12 / 10) * 10) : 10;
+  for (let m = markStep; m < periodMin; m += markStep) {
+    const t = new Date(startMs + m * 60000);
+    const sp = subPoint(state.sat, t);
+    if (!sp) continue;
+    let lon = ((sp.lonDeg + lonShift + 180) % 360 + 360) % 360 - 180;
+    const p = project(sp.latDeg, lon);
+    if (!p) continue;
+    ov.appendChild(el("circle", { cx: p[0], cy: p[1], r: 3.2, fill: "#9ecbff", stroke: "var(--panel)", "stroke-width": 1 }));
+    const lbl = el("text", { x: p[0] + 7, y: p[1], "dominant-baseline": "central",
+      "font-family": "DejaVu Sans Mono, monospace", "font-size": 9, fill: "#cfe6ff" });
+    lbl.textContent = m;
+    // backing box for legibility
+    const box = el("rect", { x: p[0] + 4, y: p[1] - 7, width: String(m).length * 6 + 5, height: 13,
+      rx: 3, fill: "var(--panel)", opacity: 0.7 });
+    ov.appendChild(box); ov.appendChild(lbl);
+  }
+
+  // QTH range circle (amber) — the satellite's footprint radius at MEAN altitude,
+  // centred on the station. On the polar maps the station is off-centre, so the
+  // same constant-distance circle re-projects to an oval; OrbitDeck enlarges the
+  // generic polar circle by ~6.5% to best fit across latitudes.
+  if (state.showRange) {
+    let reticleDeg = footprintDeg(meanAltKm(state.sat));
+    if (state.resolved !== "qth") reticleDeg *= 1.065;   // POLAR_RANGE_CIRCLE_INFLATION
+    drawProjected(ov, smallCircle(state.qlat, state.qlon, reticleDeg),
+      { stroke: "var(--warn)", "stroke-width": 2.2 });
+  }
+
+  // On polar maps the centre is the pole, so mark the actual QTH with a star.
+  if (state.resolved !== "qth") {
+    const qp = project(state.qlat, state.qlon);
+    if (qp) {
+      ov.appendChild(el("path", {
+        d: starPath(qp[0], qp[1], 9, 4, 5),
+        fill: "var(--warn)", stroke: "#000", "stroke-width": 0.7,
+      }));
+    }
+  }
+
+  // current satellite position + optional instantaneous footprint
+  const tNow = new Date(startMs + state.afterMin * 60000);
+  const spNow = subPoint(state.sat, tNow);
+  if (spNow) {
+    const satLon = ((spNow.lonDeg + lonShift + 180) % 360 + 360) % 360 - 180;
+    const satLat = spNow.latDeg, satAlt = spNow.altKm;
+    if (state.showFoot) {
+      drawProjected(ov, smallCircle(satLat, satLon, footprintDeg(satAlt)),
+        { stroke: "var(--accent2)", "stroke-width": 1.8, "stroke-dasharray": "5 3" });
+    }
+    const p = project(satLat, satLon);
+    if (p) ov.appendChild(el("circle", { cx: p[0], cy: p[1], r: 7, fill: "var(--accent2)", stroke: "#fff", "stroke-width": 1.4 }));
+    updateReadout(satLon, satLat, satAlt);
+  } else {
+    updateReadout(null);
+  }
+}
+
+function azElRange(satLon, satLat, satAlt) {
+  // observer + sat to ECEF, compute look angles
+  const d2r = Math.PI / 180;
+  const Re = 6378.137;
+  const obs = llaToEcef(state.qlat, state.qlon, 0);
+  const sat = llaToEcef(satLat, satLon, satAlt);
+  const dx = sat.x - obs.x, dy = sat.y - obs.y, dz = sat.z - obs.z;
+  // ENU
+  const slat = Math.sin(state.qlat * d2r), clat = Math.cos(state.qlat * d2r);
+  const slon = Math.sin(state.qlon * d2r), clon = Math.cos(state.qlon * d2r);
+  const e = -slon * dx + clon * dy;
+  const n = -slat * clon * dx - slat * slon * dy + clat * dz;
+  const u = clat * clon * dx + clat * slon * dy + slat * dz;
+  const range = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const el = Math.asin(u / range) / d2r;
+  let az = Math.atan2(e, n) / d2r; if (az < 0) az += 360;
+  return { az, el, range };
+}
+function llaToEcef(lat, lon, alt) {
+  const d2r = Math.PI / 180, a = 6378.137, f = 1 / 298.257223563;
+  const e2 = 2 * f - f * f;
+  const N = a / Math.sqrt(1 - e2 * Math.sin(lat * d2r) ** 2);
+  return {
+    x: (N + alt) * Math.cos(lat * d2r) * Math.cos(lon * d2r),
+    y: (N + alt) * Math.cos(lat * d2r) * Math.sin(lon * d2r),
+    z: (N * (1 - e2) + alt) * Math.sin(lat * d2r),
+  };
+}
+
+function fmtLon(l){ return Math.abs(l).toFixed(1) + "°" + (l >= 0 ? "E" : "W"); }
+function fmtLat(l){ return Math.abs(l).toFixed(1) + "°" + (l >= 0 ? "N" : "S"); }
+
+function updateReadout(satLon, satLat, satAlt) {
+  document.getElementById("ro-eqx").textContent = fmtLon(state.eqxLon);
+  document.getElementById("ro-min").textContent = state.afterMin.toFixed(1) + " min";
+  if (satLon == null) {
+    document.getElementById("ro-sub").textContent = "—";
+    document.getElementById("ro-azel").textContent = "—";
+    document.getElementById("ro-range").textContent = "—";
+    document.getElementById("ro-vis").textContent = "—";
+    return;
+  }
+  document.getElementById("ro-sub").textContent = fmtLat(satLat) + " " + fmtLon(satLon);
+  const ae = azElRange(satLon, satLat, satAlt);
+  document.getElementById("ro-azel").textContent = ae.az.toFixed(0) + "° / " + ae.el.toFixed(0) + "°";
+  document.getElementById("ro-range").textContent = ae.range.toFixed(0) + " km";
+  document.getElementById("ro-vis").textContent = ae.el > 0 ? "yes — above horizon" : "no";
+}
+
+/* ---- controls ---- */
+function setEqx(v){ state.eqxLon = +v;
+  document.getElementById("v-eqx").textContent = fmtLon(+v);
+  document.getElementById("s-eqx").value = v; buildArc(); }
+function setMin(v){ state.afterMin = +v;
+  document.getElementById("v-min").textContent = (+v).toFixed(1);
+  document.getElementById("s-min").value = v; buildArc(); }
+
+document.getElementById("s-eqx").addEventListener("input", e => { if (state.live) { e.target.value = state.eqxLon; return; } setEqx(e.target.value); });
+document.getElementById("s-min").addEventListener("input", e => { if (state.live) { e.target.value = state.afterMin; return; } setMin(e.target.value); });
+
+function showErr(msg){ const e = document.getElementById("err"); e.style.display = "block"; e.textContent = msg; }
+function clearErr(){ document.getElementById("err").style.display = "none"; }
+
+function loadSat() {
+  clearErr();
+  try {
+    const omm = {
+      AMSAT_NAME: document.getElementById("satname").value || "SAT",
+      EPOCH: document.getElementById("el-epoch").value.trim(),
+      INCLINATION: parseFloat(document.getElementById("el-incl").value),
+      RA_OF_ASC_NODE: parseFloat(document.getElementById("el-raan").value),
+      ECCENTRICITY: parseFloat(document.getElementById("el-ecc").value),
+      ARG_OF_PERICENTER: parseFloat(document.getElementById("el-argp").value),
+      MEAN_ANOMALY: parseFloat(document.getElementById("el-ma").value),
+      MEAN_MOTION: parseFloat(document.getElementById("el-mm").value),
+      BSTAR: 0,
+    };
+    state.qlat = parseFloat(document.getElementById("qlat").value);
+    state.qlon = parseFloat(document.getElementById("qlon").value);
+    state.sat = sgp4FromOMM(omm);
+    drawBase();
+    seedNextPass();
+    updateModeBadge();
+    buildRefTable();
+    buildPassTable();
+  } catch (e) { showErr("Could not load: " + e.message); }
+}
+
+// ---- AMSAT satellite catalog (GP data) ----
+const BULLETIN_URL = "https://newark192.amsat.org/gpdata/current/daily-bulletin.json";
+const PROXY_URL = "https://oscarlocator-pwa.prstoetzer.workers.dev/";  // self-hosted CORS proxy; tried first. The proxyurl input field, if present, overrides this.
+let catalog = [];
+
+// Populate the picker dropdown from a catalog array (bundled or freshly fetched).
+function populatePicker(data, label) {
+  catalog = data;
+  const sel = document.getElementById("satpick");
+  sel.innerHTML = '<option value="">— ' + data.length + ' satellites' + (label ? " · " + label : "") + ' —</option>';
+  data.forEach((s, i) => {
+    const o = document.createElement("option");
+    o.value = i; o.textContent = s.AMSAT_NAME || s.OBJECT_NAME || ("SAT " + i);
+    sel.appendChild(o);
+  });
+}
+
+// A current AMSAT snapshot is embedded so the picker works with no network
+// (the Claude.ai artifact sandbox blocks outbound requests). "Refresh (online)"
+// re-fetches when the file is opened normally in a browser or self-hosted.
+function loadBundledCatalog() {
+  try {
+    const raw = document.getElementById("amsat-data");
+    if (!raw) return;
+    const data = JSON.parse(raw.textContent);
+    if (Array.isArray(data) && data.length) {
+      populatePicker(data, "bundled");
+      const ep = data[0] && data[0].EPOCH ? data[0].EPOCH.slice(0, 10) : "";
+      const status = document.getElementById("amsat-status");
+      if (status) status.textContent = data.length + " satellites loaded (bundled snapshot"
+        + (ep ? ", epoch ~" + ep : "") + "). Pick one above, or Refresh for live data.";
+    }
+  } catch (e) {}
+}
+
+// Each source returns the bulletin in a slightly different shape; `parse`
+// normalises it to the array of GP records. Public proxies come and go, so we
+// try several and use the first that yields a non-empty array.
+function ammSources() {
+  const enc = encodeURIComponent(BULLETIN_URL);
+  const list = [];
+  const userProxy = (PROXY_URL || "").trim();
+  if (userProxy) {
+    const base = userProxy.replace(/\/$/, "");
+    // Two common proxy styles:
+    //  (a) fixed-upstream worker (the bundled one): hit it as-is, it returns the array.
+    //  (b) generic proxy that needs the target URL: append ?url=<encoded bulletin>.
+    // Try the as-is form first, then the ?url= form, so either kind of proxy works.
+    list.push({ name: "proxy", url: base, parse: parseFlexible, tries: 2 });
+    const joiner = base.includes("?") ? "&" : "?";
+    list.push({ name: "proxy (?url=)", url: base + joiner + "url=" + enc, parse: parseFlexible, tries: 2 });
+  }
+  // allorigins /get wraps the body in {contents:"..."}; reliable but intermittent — retry it
+  list.push({ name: "allorigins/get", url: "https://api.allorigins.win/get?url=" + enc,
+              parse: t => JSON.parse(JSON.parse(t).contents), tries: 4 });
+  // allorigins /raw returns the body verbatim
+  list.push({ name: "allorigins/raw", url: "https://api.allorigins.win/raw?url=" + enc, parse: parseFlexible, tries: 3 });
+  // last resort: direct (works only if AMSAT ever sends CORS headers)
+  list.push({ name: "direct", url: BULLETIN_URL, parse: parseFlexible, tries: 1 });
+  return list;
+}
+
+// Accept either a raw JSON array, or an allorigins-style {contents:"..."} wrapper.
+function parseFlexible(text) {
+  const v = JSON.parse(text);
+  if (Array.isArray(v)) return v;
+  if (v && typeof v.contents === "string") return JSON.parse(v.contents);
+  throw new Error("unexpected response shape");
+}
+
+// Some sandboxed/iframe environments structure-clone fetch arguments and cannot
+// clone an AbortSignal (throws "The object can not be cloned"); some also proxy
+// fetch in ways that fail on external URLs. We therefore (1) call fetch with NO
+// options object at all, and (2) fall back to XMLHttpRequest, which is not
+// subject to the same argument-cloning and often succeeds where fetch fails.
+function xhrGet(url, ms) {
+  return new Promise((resolve, reject) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.timeout = ms;
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+        else reject(new Error("HTTP " + xhr.status));
+      };
+      xhr.onerror = () => reject(new Error("network/CORS error"));
+      xhr.ontimeout = () => reject(new Error("timeout"));
+      xhr.send();
+    } catch (e) { reject(e); }
+  });
+}
+
+function fetchTextWithTimeout(url, ms) {
+  // Try fetch first (no options -> nothing to clone), then XHR as a fallback.
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timeout")), ms); });
+  const tryFetch = Promise.race([fetch(url).then(r => {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }), timeout]).finally(() => clearTimeout(timer));
+  return tryFetch.catch(() => xhrGet(url, ms));   // fetch blocked/cloning/CORS -> XHR
+}
+
+function applyOmm(o) {
+  const set = (id, v) => { const e = document.getElementById(id); if (e != null && v != null) e.value = v; };
+  set("satname", o.AMSAT_NAME || o.OBJECT_NAME || "SAT");
+  set("el-epoch", (o.EPOCH || "").replace("Z", ""));
+  set("el-incl", o.INCLINATION); set("el-raan", o.RA_OF_ASC_NODE);
+  set("el-ecc", o.ECCENTRICITY); set("el-argp", o.ARG_OF_PERICENTER);
+  set("el-ma", o.MEAN_ANOMALY); set("el-mm", o.MEAN_MOTION);
+}
+
+async function fetchAmsat() {
+  clearErr();
+  const btn = document.getElementById("fetchsats");
+  const status = document.getElementById("amsat-status");
+  btn.disabled = true;
+  let ok = false, lastErr = "", attempt = 0, usedName = "";
+  const tried = [];
+  outer:
+  for (const src of ammSources()) {
+    let srcErr = "";
+    for (let t = 0; t < src.tries; t++) {
+      attempt++;
+      btn.textContent = "Loading…" + (attempt > 1 ? " (" + attempt + ")" : "");
+      if (status) status.textContent = "Trying " + src.name + "…";
+      try {
+        const text = await fetchTextWithTimeout(src.url, 12000);
+        if (/Request Timeout|error code:|Forbidden/i.test(text.slice(0, 40))) throw new Error("proxy busy");
+        const data = src.parse(text);
+        if (!Array.isArray(data) || !data.length) throw new Error("empty");
+        populatePicker(data, "live");
+        ok = true; usedName = src.name; break outer;
+      } catch (e) { srcErr = e.message; lastErr = e.message; await new Promise(r => setTimeout(r, 600)); }
+    }
+    tried.push(src.name + ": " + srcErr);
+  }
+  btn.textContent = "Refresh"; btn.disabled = false;
+  if (ok) {
+    if (status) {
+      status.textContent = "Loaded " + catalog.length + " satellites via " + usedName + ".";
+      status.style.color = "var(--accent2)";
+    }
+  } else {
+    if (status) { status.style.color = ""; }
+    const haveBundled = catalog && catalog.length;
+    showErr("Couldn't fetch live AMSAT data right now. "
+      + (haveBundled ? "Using the bundled snapshot in the picker above. " : "")
+      + "Verify the Worker URL configured in the page source (PROXY_URL), or press Refresh to retry. "
+      + "(Sources tried: " + tried.join("  •  ") + ".)");
+  }
+}
+
+// Elevation (deg) of the satellite as seen from the QTH at a given time.
+function elevationAt(date) {
+  const sp = subPoint(state.sat, date);
+  if (!sp) return -90;
+  return azElRange(sp.lonDeg, sp.latDeg, sp.altKm).el;
+}
+
+// Find the next time the satellite rises above the horizon at the QTH (AOS),
+// scanning forward from `from`. Returns { aos, max, maxEl, los, maxAz } or null.
+function findNextVisiblePass(from, horizonDeg) {
+  const horizon = horizonDeg || 0;
+  const stepSec = 30;
+  const horizonMs = 48 * 3600 * 1000;     // search up to 48 h ahead
+  let prevEl = elevationAt(from);
+  let t = from.getTime();
+  const end = t + horizonMs;
+  while (t < end) {
+    t += stepSec * 1000;
+    const el = elevationAt(new Date(t));
+    if (prevEl <= horizon && el > horizon) {
+      // bracket the AOS crossing, then refine by bisection
+      let lo = t - stepSec * 1000, hi = t;
+      for (let k = 0; k < 24; k++) {
+        const mid = (lo + hi) / 2;
+        if (elevationAt(new Date(mid)) > horizon) hi = mid; else lo = mid;
+      }
+      const aos = new Date(hi);
+      // walk to the elevation peak and on to LOS (drop below horizon)
+      let pk = hi, pkEl = elevationAt(aos), los = end;
+      for (let s = hi; s < end; s += stepSec * 1000) {
+        const e = elevationAt(new Date(s));
+        if (e > pkEl) { pkEl = e; pk = s; }
+        if (e <= horizon) {
+          // refine LOS by bisection between s-step and s
+          let l2 = s - stepSec * 1000, h2 = s;
+          for (let k = 0; k < 20; k++) { const m = (l2 + h2) / 2; if (elevationAt(new Date(m)) > horizon) l2 = m; else h2 = m; }
+          los = h2; break;
+        }
+      }
+      // azimuth at peak
+      const spPk = subPoint(state.sat, new Date(pk));
+      const maxAz = spPk ? azElRange(spPk.lonDeg, spPk.latDeg, spPk.altKm).az : null;
+      return { aos, max: new Date(pk), maxEl: pkEl, los: new Date(los), maxAz };
+    }
+    prevEl = el;
+  }
+  return null;
+}
+
+// Collect the next `n` visible passes from now.
+function findNextPasses(n, horizonDeg) {
+  const passes = [];
+  let from = new Date();
+  for (let i = 0; i < n; i++) {
+    const p = findNextVisiblePass(from, horizonDeg);
+    if (!p) break;
+    passes.push(p);
+    from = new Date(p.los.getTime() + 60000); // resume just after LOS
+  }
+  return passes;
+}
+
+function seedNextPass() {
+  if (!state.sat) { showErr("Load a satellite first."); return; }
+  clearErr();
+  const now = new Date();
+
+  // High / geosynchronous satellites don't make passes — anchor to "now" and
+  // show the true current position. Whether the QTH can see it is fixed.
+  const periodMin = (2 * Math.PI / state.sat.no_unkozai);
+  if (periodMin > 600) {
+    state.refDate = now;
+    const sp = subPoint(state.sat, now);
+    if (sp) {
+      setEqx(sp.lonDeg);
+      setMin(0);
+      const ae = azElRange(sp.lonDeg, sp.latDeg, sp.altKm);
+      document.getElementById("hint").textContent =
+        "Geosynchronous/high orbit: shown at its current sub-point (" +
+        Math.abs(sp.latDeg).toFixed(1) + (sp.latDeg >= 0 ? "°N " : "°S ") +
+        Math.abs(sp.lonDeg).toFixed(1) + (sp.lonDeg >= 0 ? "°E" : "°W") + "). " +
+        (ae.el > 0 ? "Visible from your QTH (el " + ae.el.toFixed(0) + "°)." : "Below your horizon — not workable from this QTH.");
+    }
+    buildArc();
+    return;
+  }
+
+  const pass = findNextVisiblePass(now, 0);
+  if (!pass) { showErr("No visible pass over your QTH in the next 48 h (check your QTH lat/lon)."); return; }
+
+  // Anchor the arc to the node crossing of THIS pass, so the drawn orbit is the
+  // one that's actually visible. Find the node crossing nearest the AOS.
+  const nodeKind = state.resolved === "polar-south" ? "descending" : "ascending";
+  const win = 130 * 60000;  // half an orbit either side of AOS
+  const cands = findCrossings(state.sat, new Date(pass.aos.getTime() - win),
+    new Date(pass.aos.getTime() + win), { node: nodeKind, stepSec: 30 });
+  let node = null;
+  if (cands.length) {
+    // the node crossing just before AOS (the pass belongs to that orbit)
+    const before = cands.filter(c => c.date.getTime() <= pass.aos.getTime());
+    node = (before.length ? before[before.length - 1] : cands[0]);
+  }
+  if (node) {
+    state.refDate = node.date;
+    setEqx(node.lonDeg);
+    setMin(Math.max(0, (pass.aos.getTime() - node.date.getTime()) / 60000));
+  } else {
+    // fallback: anchor directly at AOS
+    state.refDate = pass.aos;
+    const sp = subPoint(state.sat, pass.aos);
+    if (sp) setEqx(sp.lonDeg);
+    setMin(0);
+  }
+
+  const aosStr = pass.aos.toISOString().slice(0, 16).replace("T", " ");
+  document.getElementById("hint").textContent =
+    "Next visible pass: AOS " + aosStr + " UTC, max elevation " + pass.maxEl.toFixed(0) + "° over your QTH.";
+}
+
+function setControlsLocked(locked) {
+  const eqx = document.getElementById("s-eqx");
+  const min = document.getElementById("s-min");
+  if (eqx) eqx.disabled = locked;
+  if (min) min.disabled = locked;
+  const svgEl = document.getElementById("map");
+  if (svgEl) svgEl.classList.toggle("locked", locked);
+  const sweep = document.querySelector(".leftcol .panel");
+  if (sweep) sweep.classList.toggle("locked", locked);
+}
+
+function toggleLive() {
+  const btn = document.getElementById("live");
+  if (state.live) {
+    state.live = false; clearInterval(state.liveTimer); state.liveTimer = null;
+    btn.classList.remove("on"); btn.textContent = "Go live";
+    setControlsLocked(false);
+    return;
+  }
+  if (!state.sat) { showErr("Load a satellite first."); return; }
+  // anchor: most recent ascending crossing before now
+  const now = new Date();
+  const nodeKind = state.resolved === "polar-south" ? "descending" : "ascending";
+  const past = findCrossings(state.sat, new Date(now.getTime() - 130 * 60000), now, { node: nodeKind, stepSec: 60 });
+  if (!past.length) { showErr("No recent crossing to anchor live mode."); return; }
+  const c = past[past.length - 1];
+  state.refDate = c.date;
+  setEqx(c.lonDeg);
+  state.live = true; btn.classList.add("on"); btn.textContent = "Live ●";
+  setControlsLocked(true);
+  const tick = () => {
+    // re-resolve hemisphere (polar-auto follows the satellite); redraw the base
+    // map when the satellite crosses the equator and the sheet flips.
+    const newResolved = resolveMode();
+    if (newResolved !== state.resolved) {
+      state.resolved = newResolved;
+      drawBase();                 // redraw map for the new hemisphere
+      updateModeBadge();
+      // re-anchor to the node appropriate for the new hemisphere
+      const n2 = new Date();
+      const nk = state.resolved === "polar-south" ? "descending" : "ascending";
+      const p2 = findCrossings(state.sat, new Date(n2.getTime() - 130 * 60000), n2, { node: nk, stepSec: 60 });
+      if (p2.length) { state.refDate = p2[p2.length - 1].date; const sp = subPoint(state.sat, state.refDate); if (sp) state.eqxLon = sp.lonDeg; }
+    }
+    const mins = (Date.now() - state.refDate.getTime()) / 60000;
+    if (mins > 130 || mins < 0) { // re-anchor to newest crossing
+      const n2 = new Date();
+      const nk = state.resolved === "polar-south" ? "descending" : "ascending";
+      const p2 = findCrossings(state.sat, new Date(n2.getTime() - 130 * 60000), n2, { node: nk, stepSec: 60 });
+      if (p2.length) { state.refDate = p2[p2.length - 1].date; const sp = subPoint(state.sat, state.refDate); if (sp) setEqx(sp.lonDeg); }
+    }
+    setMin(Math.max(0, (Date.now() - state.refDate.getTime()) / 60000));
+    updateModeBadge();
+  };
+  tick(); state.liveTimer = setInterval(tick, 1000);
+  document.getElementById("hint").textContent = "Live: the satellite advances in real time; the polar sheet flips hemisphere at the equator.";
+}
+
+document.getElementById("load").addEventListener("click", loadSat);
+// Maidenhead grid <-> lat/lon two-way sync
+(function gridSync(){
+  const gEl = document.getElementById("qgrid");
+  const laEl = document.getElementById("qlat");
+  const loEl = document.getElementById("qlon");
+  function fromGrid() {
+    const ll = gridToLatlon(gEl.value);
+    gEl.style.borderColor = ll ? "" : "var(--warn)";
+    if (ll) { laEl.value = ll[0].toFixed(4); loEl.value = ll[1].toFixed(4); }
+  }
+  function fromLatLon() {
+    const la = parseFloat(laEl.value), lo = parseFloat(loEl.value);
+    if (isFinite(la) && isFinite(lo) && la >= -90 && la <= 90 && lo >= -180 && lo <= 180) {
+      gEl.value = latlonToGrid(la, lo); gEl.style.borderColor = "";
+    }
+  }
+  gEl.addEventListener("input", fromGrid);
+  laEl.addEventListener("input", fromLatLon);
+  loEl.addEventListener("input", fromLatLon);
+
+  // ---- Geolocation: apply browser-detected coordinates to the QTH ----
+  function applyCoords(lat, lon) {
+    laEl.value = lat.toFixed(4);
+    loEl.value = lon.toFixed(4);
+    fromLatLon();                 // update grid square
+    state.qlat = lat; state.qlon = lon;
+    if (state.sat) { drawBase(); seedNextPass(); buildPassTable(); buildRefTable(); }
+    else { drawBase(); }
+  }
+  function detectLocation(manual) {
+    const status = document.getElementById("geo-status");
+    if (!navigator.geolocation) {
+      if (manual && status) status.textContent = "Geolocation isn't available in this browser.";
+      return;
+    }
+    if (status) status.textContent = "Detecting your location…";
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        applyCoords(pos.coords.latitude, pos.coords.longitude);
+        if (status) status.textContent = "Using your detected location (grid " + gEl.value + ").";
+      },
+      err => {
+        if (status) status.textContent = manual
+          ? (err.code === 1 ? "Location permission denied — enter your QTH manually." : "Couldn't get your location — enter your QTH manually.")
+          : "";   // silent on auto-attempt; default QTH stays
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
+    );
+  }
+  const geoBtn = document.getElementById("geo");
+  if (geoBtn) geoBtn.addEventListener("click", () => detectLocation(true));
+  // Auto-detect once on load (uses the default QTH until/unless the user allows it).
+  detectLocation(false);
+})();
+document.getElementById("seed").addEventListener("click", () => { if (state.live) toggleLive(); seedNextPass(); });
+document.getElementById("live").addEventListener("click", toggleLive);
+document.getElementById("c-range").addEventListener("change", e => { state.showRange = e.target.checked; buildArc(); });
+document.getElementById("c-foot").addEventListener("change", e => { state.showFoot = e.target.checked; buildArc(); });
+document.getElementById("mode").addEventListener("change", e => {
+  state.mode = e.target.value;
+  if (state.live) toggleLive();
+  drawBase();
+  updateModeBadge();
+  if (state.sat) seedNextPass(); else buildArc();
+  buildRefTable();
+  buildPassTable();
+});
+document.getElementById("fetchsats").addEventListener("click", fetchAmsat);
+document.getElementById("satpick").addEventListener("change", e => {
+  const i = e.target.value;
+  if (i === "" || !catalog[i]) return;
+  applyOmm(catalog[i]);
+  loadSat();
+});
+document.getElementById("ref-refresh").addEventListener("click", buildRefTable);
+document.getElementById("ref-days").addEventListener("change", buildRefTable);
+document.getElementById("ref-copy").addEventListener("click", copyRefTable);
+document.getElementById("pass-refresh").addEventListener("click", buildPassTable);
+document.getElementById("pass-minel").addEventListener("change", buildPassTable);
+document.getElementById("pass-copy").addEventListener("click", copyPassTable);
+
+// ---- Next passes over the QTH ----
+let passRows = [];
+function fmtDur(ms) {
+  const m = Math.round(ms / 60000);
+  return m + " min";
+}
+function fmtUTC(d, withDate) {
+  const s = d.toISOString();
+  return withDate ? s.slice(5, 16).replace("T", " ") : s.slice(11, 16);
+}
+function buildPassTable() {
+  const body = document.getElementById("pass-body");
+  if (!state.sat) { body.innerHTML = '<tr><td colspan="6" class="ref-empty">Load a satellite to list passes.</td></tr>'; return; }
+  // High / geosynchronous satellites are either always or never in view from a
+  // given QTH — there are no discrete passes to list.
+  const periodMin = (2 * Math.PI / state.sat.no_unkozai);
+  if (periodMin > 600) {
+    const sp = subPoint(state.sat, new Date());
+    let msg = "Geosynchronous/high orbit — no discrete passes.";
+    if (sp) {
+      const ae = azElRange(sp.lonDeg, sp.latDeg, sp.altKm);
+      msg += ae.el > 0
+        ? " Continuously visible from your QTH (elevation " + ae.el.toFixed(0) + "°, azimuth " + ae.az.toFixed(0) + "°)."
+        : " Below your horizon from this QTH — not workable.";
+    }
+    body.innerHTML = '<tr><td colspan="6" class="ref-empty">' + msg + '</td></tr>';
+    passRows = [];
+    return;
+  }
+  body.innerHTML = '<tr><td colspan="6" class="ref-empty">Computing passes…</td></tr>';
+  // compute asynchronously so the "Computing…" paints first
+  setTimeout(() => {
+    const minEl = Math.max(0, Math.min(60, parseFloat(document.getElementById("pass-minel").value) || 0));
+    passRows = findNextPasses(10, minEl);
+    if (!passRows.length) {
+      body.innerHTML = '<tr><td colspan="6" class="ref-empty">No passes above ' + minEl + '° in the next 48 h.</td></tr>';
+      return;
+    }
+    body.innerHTML = "";
+    passRows.forEach((p, i) => {
+      const tr = document.createElement("tr");
+      const dur = p.los.getTime() - p.aos.getTime();
+      const az = p.maxAz != null ? " " + compass(p.maxAz) : "";
+      tr.innerHTML =
+        '<td>' + fmtUTC(p.aos, true) + '</td>' +
+        '<td>' + fmtUTC(p.max) + '</td>' +
+        '<td>' + fmtUTC(p.los) + '</td>' +
+        '<td>' + fmtDur(dur) + '</td>' +
+        '<td class="lon">' + p.maxEl.toFixed(0) + '°' + az + '</td>' +
+        '<td><button class="btn ghost sm pass-seed" data-i="' + i + '">Seed</button></td>';
+      body.appendChild(tr);
+    });
+    body.querySelectorAll(".pass-seed").forEach(btn => {
+      btn.addEventListener("click", () => seedPass(passRows[parseInt(btn.dataset.i)]));
+    });
+  }, 30);
+}
+function compass(az) {
+  const dirs = ["N","NE","E","SE","S","SW","W","NW"];
+  return dirs[Math.round(az / 45) % 8];
+}
+// Seed the map arc to a specific pass (same anchoring as seedNextPass).
+function seedPass(pass) {
+  if (!pass || !state.sat) return;
+  if (state.live) toggleLive();
+  clearErr();
+  const nodeKind = state.resolved === "polar-south" ? "descending" : "ascending";
+  const win = 130 * 60000;
+  const cands = findCrossings(state.sat, new Date(pass.aos.getTime() - win),
+    new Date(pass.aos.getTime() + win), { node: nodeKind, stepSec: 30 });
+  let node = null;
+  if (cands.length) {
+    const before = cands.filter(c => c.date.getTime() <= pass.aos.getTime());
+    node = (before.length ? before[before.length - 1] : cands[0]);
+  }
+  if (node) {
+    state.refDate = node.date;
+    setEqx(node.lonDeg);
+    setMin(Math.max(0, (pass.aos.getTime() - node.date.getTime()) / 60000));
+  } else {
+    state.refDate = pass.aos;
+    const sp = subPoint(state.sat, pass.aos);
+    if (sp) setEqx(sp.lonDeg);
+    setMin(0);
+  }
+  document.getElementById("hint").textContent =
+    "Seeded pass: AOS " + fmtUTC(pass.aos, true) + " UTC, max elevation " + pass.maxEl.toFixed(0) + "°.";
+}
+function copyPassTable() {
+  if (!passRows.length) return;
+  const lines = ["Next passes — " + document.getElementById("satname").value
+    + " over " + state.qlat.toFixed(2) + ", " + state.qlon.toFixed(2), "",
+    "AOS (UTC)        Peak   LOS    Dur     MaxEl  Dir"];
+  for (const p of passRows) {
+    const dur = Math.round((p.los - p.aos) / 60000) + "m";
+    lines.push(
+      fmtUTC(p.aos, true).padEnd(14) + "  " + fmtUTC(p.max) + "  " + fmtUTC(p.los) + "  " +
+      dur.padStart(5) + "  " + (p.maxEl.toFixed(0) + "°").padStart(5) + "  " +
+      (p.maxAz != null ? compass(p.maxAz) : ""));
+  }
+  const text = lines.join("\n");
+  if (navigator.clipboard) navigator.clipboard.writeText(text);
+  const btn = document.getElementById("pass-copy");
+  const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = old, 1200);
+}
+
+// ---- Reference orbits table (EQX time + longitude per UTC day) ----
+let refRows = [];
+// Which node anchors the reference table: descending whenever the southern
+// polar sheet is active OR the QTH is in the southern hemisphere (so the
+// QTH-centred view for a southern station also lists descending crossings).
+function refUsesDescending() {
+  return state.resolved === "polar-south" || state.qlat < 0;
+}
+
+function buildRefTable() {
+  const body = document.getElementById("ref-body");
+  const head = document.getElementById("ref-node-h");
+  if (!state.sat) { body.innerHTML = '<tr><td colspan="3" class="ref-empty">Load a satellite to build the table.</td></tr>'; return; }
+  // Equator-crossing reference orbits are a LEO/OSCARLOCATOR concept; a
+  // geosynchronous satellite holds a fixed sub-point and has no useful crossings.
+  const periodMin = (2 * Math.PI / state.sat.no_unkozai);
+  if (periodMin > 600) {
+    const sp = subPoint(state.sat, new Date());
+    const loc = sp ? (Math.abs(sp.lonDeg).toFixed(1) + (sp.lonDeg >= 0 ? "°E" : "°W")) : "";
+    body.innerHTML = '<tr><td colspan="3" class="ref-empty">Geosynchronous/high orbit — holds a fixed sub-point near '
+      + loc + '; equator-crossing reference orbits don\'t apply.</td></tr>';
+    refRows = [];
+    return;
+  }
+  const south = refUsesDescending();
+  head.textContent = south ? "Desc. UTC" : "Asc. UTC";
+  const days = Math.max(1, Math.min(60, parseInt(document.getElementById("ref-days").value) || 14));
+  const node = south ? "descending" : "ascending";
+  const DAY = 86400000;
+  const now = new Date();
+  const d0 = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const all = findCrossings(state.sat, new Date(d0 - DAY), new Date(d0 + (days + 1) * DAY),
+    { node, stepSec: 60 });
+  refRows = [];
+  for (let i = 0; i < days; i++) {
+    const ds = d0 + i * DAY, de = ds + DAY;
+    const c = all.find(x => x.date.getTime() >= ds && x.date.getTime() < de);
+    refRows.push({ date: new Date(ds), cross: c || null });
+  }
+  body.innerHTML = "";
+  for (const r of refRows) {
+    const tr = document.createElement("tr");
+    const ymd = r.date.toISOString().slice(0, 10);
+    if (r.cross) {
+      const hh = r.cross.date.toISOString().slice(11, 19);
+      const lon = r.cross.lonDeg;
+      const lonStr = Math.abs(lon).toFixed(1) + "°" + (lon >= 0 ? "E" : "W");
+      tr.innerHTML = `<td>${ymd}</td><td>${hh}</td><td class="lon">${lonStr}</td>`;
+    } else {
+      tr.innerHTML = `<td>${ymd}</td><td>—</td><td>—</td>`;
+    }
+    body.appendChild(tr);
+  }
+}
+function copyRefTable() {
+  if (!refRows.length) return;
+  const south = refUsesDescending();
+  const lines = [`OSCARLOCATOR reference orbits — ${document.getElementById("satname").value}`,
+    `${south ? "Descending" : "Ascending"} node, first crossing per UTC day`, ""];
+  lines.push("DATE        UTC       LONGITUDE");
+  for (const r of refRows) {
+    if (r.cross) {
+      const lon = r.cross.lonDeg;
+      lines.push(`${r.date.toISOString().slice(0,10)}  ${r.cross.date.toISOString().slice(11,19)}  ${(Math.abs(lon).toFixed(1)+"°"+(lon>=0?"E":"W")).padStart(8)}`);
+    } else lines.push(`${r.date.toISOString().slice(0,10)}  --        --`);
+  }
+  const text = lines.join("\n");
+  if (navigator.clipboard) navigator.clipboard.writeText(text);
+  const btn = document.getElementById("ref-copy");
+  const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = old, 1200);
+}
+
+/* ---- drag-to-rotate the arc (changes EQX longitude) ---- */
+(function enableDrag(){
+  let dragging = false, lastAngle = 0;
+  function angleAt(ev){
+    const rect = svg.getBoundingClientRect();
+    const sx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+    const sy = (ev.touches ? ev.touches[0].clientY : ev.clientY) - rect.top;
+    const vx = sx / rect.width * 660, vy = sy / rect.height * 660;
+    return Math.atan2(vy - CY, vx - CX) * 180 / Math.PI;
+  }
+  function down(ev){
+    if(!state.sat) return;
+    if(state.live){ ev.preventDefault(); return; }   // arc is locked while live tracking
+    dragging = true; svg.classList.add("dragging"); lastAngle = angleAt(ev); ev.preventDefault();
+  }
+  function move(ev){
+    if (!dragging) return;
+    const a = angleAt(ev);
+    let d = a - lastAngle;
+    if (d > 180) d -= 360; if (d < -180) d += 360;
+    lastAngle = a;
+    let v = state.eqxLon - d;          // dragging clockwise sweeps east->west
+    v = ((v + 180) % 360 + 360) % 360 - 180;
+    setEqx(v);
+    ev.preventDefault();
+  }
+  function up(){ dragging = false; svg.classList.remove("dragging"); }
+  svg.addEventListener("mousedown", down); window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+  svg.addEventListener("touchstart", down, {passive:false}); window.addEventListener("touchmove", move, {passive:false}); window.addEventListener("touchend", up);
+})();
+
+// boot
+loadSat();
+loadBundledCatalog();
+if (PROXY_URL) { fetchAmsat(); }
+</script>
+</body>
+</html>

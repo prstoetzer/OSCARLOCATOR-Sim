@@ -1,0 +1,5 @@
+name = "oscarlocator-amsat-proxy"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# No KV, no secrets, no bindings needed — this is a stateless pass-through.
